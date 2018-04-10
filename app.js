@@ -142,11 +142,14 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
         autoRefresh
       );
       oAuth2TwoLegged.authenticate().then(function(credentials) {
+        if(!credentials) { res.status(500).send('Empty or undefined credentials!'); }
         createBucketIfNotExist(bucketsApi, oAuth2TwoLegged).then(function(bucket_json) {
+          if(!bucket_json) { res.status(500).send('Empty or undefined bucket response!'); }
           const zipFile = fs.createWriteStream(config.OUTPUT_FILE_PATH);
           client.get('photoscenelink', function(err, photoscenelink) {
             if (err) { res.status(500).send({'ERROR': err}); }
             if (photoscenelink) {
+              console.info('INFO: Initiating download of scenelink at: ' + photoscenelink);
               request(photoscenelink)
                 .pipe(zipFile)
                 .on('close', () => {
@@ -161,8 +164,10 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
                             console.info('INFO: Finished writing to /tmp/result.obj ...');
                             uploadfileToBucket(objectsApi, oAuth2TwoLegged, '/tmp/result.obj')
                               .then(function(uploadRes) {
+                                if(!uploadRes) { res.status(500).send('Empty or undefined upload response!'); }
                                 client.set('objectid', uploadRes.body.objectId, redis.print);
                                 translateToSVF(uploadRes.body.objectId, oAuth2TwoLegged).then(function(translateRes) {
+                                  if(!translateRes) { res.status(500).send('Empty or undefined translation response!'); }
                                   res.send({'INFO': translateRes});
                                   res.end();
                                 }, function(translateErr) {
@@ -178,11 +183,9 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
             }
           });
         }, function(err) {
-          console.error('ERROR: Failed to get bucket details!');
           res.status(500).send({'ERROR': err});
         });
       }, function(err) {
-        console.error('ERROR: Failed to authenticate!');
         res.status(500).send({'ERROR': err});
       });
     } else {
@@ -197,31 +200,16 @@ app.use('/data', dataRouter);
 const derivativeRouter = express.Router();
 derivativeRouter.get('/getManifest', function(req, res) {
   client.get('objectid', function(err, objectid) {
-    const base64Urn = new Buffer.from(objectid).toString('base64');
-    const endpoint = config.DERIVATIVE_BASE_ENDPOINT  
-    + '/designdata/' + base64Urn + '/manifest';
-    logInfoToConsole('/designdata/:urn/manifest', 'GET', endpoint, null);
     client.get('token', function(err, token) {
       if(err) { res.status(500).send(err); }
       if(token) {
-        return fetch(endpoint, {
-          method: 'GET',
-          headers: { 
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json' 
-          }
-        })
-          .then((res) => {
-            if (res.ok) {
-              return res.json();
-            } else if (res.status === 401) {
-              console.error('ERROR: You are not authorized!');
-            } else {
-              console.error('ERROR: Failed to get manifest!');
-            }
+        getManifest(token, objectid)
+          .then(function(manifest_json) {
+            if(!manifest_json) { res.status(500).send('Empty or undefined manifest response!'); }
+            res.status(200).send(manifest_json);
           })
-          .catch((err) => {
-            console.error('ERROR: Failed to get manifest!');
+          .catch(function(err) {
+            res.status(500).send(err);
           });
       }
     });
@@ -257,6 +245,28 @@ function createBucketIfNotExist(bucketsApi, oAuth2TwoLegged) {
 
 function getBucketDetails(bucketsApi, oAuth2TwoLegged) {
   return bucketsApi.getBucketDetails(config.BUCKET_KEY, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials());
+}
+
+function getManifest(token, objectId) {
+  const base64Urn = new Buffer.from(objectId).toString('base64');
+  const endpoint = config.DERIVATIVE_BASE_ENDPOINT + '/designdata/' + base64Urn + '/manifest';
+  logInfoToConsole('/designdata/:urn/manifest', 'GET', endpoint, null);
+  return fetch(endpoint, {
+    method: 'GET',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}
+  })
+    .then((res) => {
+      if(res.ok) {
+        return res.json();
+      } else if(res.statusCode === 401) {
+        console.error('ERROR: You are not authorized!');
+      } else {
+        console.error('ERROR: Failed to get manifest');
+      }
+    })
+    .catch((err) => {
+      console.error('ERROR: Failed to get manifest! ' + err);
+    });
 }
 
 function logInfoToConsole(endPoint, httpMethod, url, body) {
@@ -316,5 +326,3 @@ function uploadfileToBucket(objectsApi, oAuth2TwoLegged, filePath) {
     });
   });
 }
-
-
