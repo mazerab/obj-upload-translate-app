@@ -30,87 +30,6 @@ const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Redis endpoints
-const redisRouter = express.Router();
-redisRouter.get('/filename', function(req, res) {
-  client.get('filename', function(err, reply) {
-    if (reply) { res.send({'filename': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.post('/filename', function(req, res) {
-  if (!req.query) { res.status(500).send({'Redis': 'Missing query parameter'}); }
-  client.set('filename', req.query.filename, function(err, reply) {
-    if (reply) { res.send({'filename': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-})
-redisRouter.get('/filesize', function(req, res) {
-  client.get('filesize', function(err, reply) {
-    if (reply) { res.send({'filesize': reply, 'source': 'redis cache'}); }
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.post('/filesize', function(req, res) {
-  if (!req.query) { res.status(500).send({'Redis': 'Missing query parameter'}); }
-  client.set('filesize', req.query.filesize, function(err, reply) {
-    if (reply) { res.send({'filesize': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.get('/objectid', function(req, res) {
-  client.get('objectid', function(err, reply) {
-    if (reply) { res.send({'objectid': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.post('/objectid', function(req, res) {
-  if (!req.query) { res.status(500).send({'Redis': 'Missing query parameter'}); }
-  client.set('objectid', req.query.photosceneid, function(err, reply) {
-    if (reply) { res.send({'objectid': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.get('/photoscenelink', function(req, res) {
-  client.get('photoscenelink', function(err, reply) {
-    if (reply) { res.send({'photoscenelink': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.post('/photoscenelink', function(req, res) {
-  if (!req.query) { res.status(500).send({'Redis': 'Missing query parameter'}); }
-  client.set('photoscenelink', req.query.photoscenelink, function(err, reply) {
-    if (reply) { res.send({'photoscenelink': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.get('/token', function(req, res) {
-  client.get('token', function(err, reply) {
-    if (reply) { res.send({'token': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.get('/pushToken', function(req, res) {
-  client.get('pushToken', function(err, reply) {
-    if (reply) { res.send({'pushToken': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.get('/urn', function(req, res) {
-  client.get('urn', function(err, reply) {
-    if (reply) { res.send({'urn': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-redisRouter.post('/urn', function(req, res) {
-  if (!req.query) { res.status(500).send({'Redis': 'Missing query parameter'}); }
-  client.set('urn', req.query.photoscenelink, function(err, reply) {
-    if (reply) { res.send({'urn': reply, 'source': 'redis cache'}); } 
-    if (err) { res.status(500).send({'Redis': err}); }
-  });
-});
-app.use('/redis', redisRouter);
-
 // Expo push endpoints
 const expoRouter = express.Router();
 expoRouter.post('/tokens', function(req, res) {
@@ -148,7 +67,8 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
           const zipFile = fs.createWriteStream(config.OUTPUT_FILE_PATH);
           client.get('photoscenelink', function(err, photoscenelink) {
             if (err) { res.status(500).send({'ERROR': err}); }
-            if (photoscenelink) {
+            if (photoscenelink === 'blank') { res.status(500).send({'ERROR': 'Aborting due to blank photoscenelink!'}); }
+            if (photoscenelink.startsWith('http')) {
               console.info('INFO: Initiating download of scenelink at: ' + photoscenelink);
               request(photoscenelink)
                 .pipe(zipFile)
@@ -168,7 +88,7 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
                                 client.set('objectid', uploadRes.body.objectId, redis.print);
                                 translateToSVF(uploadRes.body.objectId, oAuth2TwoLegged).then(function(translateRes) {
                                   if(!translateRes) { res.status(500).send('Empty or undefined translation response!'); }
-                                  res.send({'INFO': translateRes});
+                                  res.send(translateRes);
                                   res.end();
                                 }, function(translateErr) {
                                   res.status(500).send({'ERROR': translateErr});
@@ -234,6 +154,10 @@ function createBucketIfNotExist(bucketsApi, oAuth2TwoLegged) {
         createBucket(bucketsApi, oAuth2TwoLegged).then(function(res) {
           resolve(res);
         }, function(err) {
+          if (err.statusCode === 409) {
+            console.info('INFO: The specified bucket key already exists.');
+            resolve(err);
+          }
           reject(err);
         });
       } else {
