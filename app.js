@@ -1,11 +1,13 @@
 'use strict';
 
+const AWS = require('aws-sdk');
 const bodyParser = require('body-parser');
 const Expo = require('expo-server-sdk');
 const express = require('express');
 const fetch = require('node-fetch');
 const forgeSDK = require('forge-apis');
 const fs = require('fs');
+const path = require('path');
 const redis = require('redis');
 const request = require('request');
 const unzip = require('unzip');
@@ -22,6 +24,9 @@ client.on('connect', function() { console.info('INFO: Connected to Redis'); });
 
 // Load Expo SDK client
 const expo = new Expo();
+
+// Amazon init
+AWS.config.update({region: 'us-east-1'});
 
 // Load express
 const app = express();
@@ -67,7 +72,7 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
           const zipFile = fs.createWriteStream(config.OUTPUT_FILE_PATH);
           client.get('photoscenelink', function(err, photoscenelink) {
             if (err) { res.status(500).send({'ERROR': err}); }
-            if (photoscenelink === 'blank') { res.status(500).send({'ERROR': 'Aborting due to blank photoscenelink!'}); }
+            console.info('INFO: Got photoscenelink value: ' + photoscenelink);
             if (photoscenelink.startsWith('http')) {
               console.info('INFO: Initiating download of scenelink at: ' + photoscenelink);
               request(photoscenelink)
@@ -84,10 +89,10 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
                             console.info('INFO: Finished writing to /tmp/result.obj ...');
                             uploadfileToBucket(objectsApi, oAuth2TwoLegged, '/tmp/result.obj')
                               .then(function(uploadRes) {
-                                if(!uploadRes) { res.status(500).send('Empty or undefined upload response!'); }
+                                if(!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
                                 client.set('objectid', uploadRes.body.objectId, redis.print);
                                 translateToSVF(uploadRes.body.objectId, oAuth2TwoLegged).then(function(translateRes) {
-                                  if(!translateRes) { res.status(500).send('Empty or undefined translation response!'); }
+                                  if(!translateRes) { res.status(500).send({'ERROR': 'Empty or undefined translation response!'}); }
                                   res.send(translateRes);
                                   res.end();
                                 }, function(translateErr) {
@@ -118,14 +123,58 @@ app.use('/data', dataRouter);
 
 // Forge derivative endpoints
 const derivativeRouter = express.Router();
+derivativeRouter.get('/getDerivativeUrn', function(req, res) {
+  client.get('objectid', function(err, objectid) {
+    if(err) { res.status(500).send(err); }
+    client.get('svfurn', function(err, svfurn) {
+      if(err) { res.status(500).send(err); }
+      client.get('token', function(err, token) {
+        if(err) { res.status(500).send(err); }
+        if(objectid, svfurn, token) {
+          getDerivativeUrn(token, objectid, svfurn)
+            .then(function() {
+              try {
+                const svfInfo = fs.statSync(config.SVF_FILE_PATH);
+                console.info('INFO: downloaded derivative urn.');
+                console.info('INFO: downloaded file size ' + svfInfo.size + ' Bytes.');
+                uploadToS3Bucket(config.SVF_FILE_PATH)
+                  .then(function() {
+                    console.info('INFO: SVF file has been successfully uploaded to S3!');
+                    res.send({'INFO': 'SVF file has been successfully uploaded to S3!'});
+                  });
+              } catch(err) {
+                console.error('Failed to get file stats! ' + err);
+                res.status(500).send(err);
+              }
+              
+            })
+            .catch(function(err) {
+              res.status(500).send(err);
+            });
+        }
+      });
+    });
+  });
+});
 derivativeRouter.get('/getManifest', function(req, res) {
   client.get('objectid', function(err, objectid) {
     client.get('token', function(err, token) {
       if(err) { res.status(500).send(err); }
-      if(token) {
+      if(objectid && token) {
         getManifest(token, objectid)
           .then(function(manifest_json) {
             if(!manifest_json) { res.status(500).send('Empty or undefined manifest response!'); }
+            if( manifest_json.derivatives 
+              && manifest_json.derivatives.length > 0 ) {
+              if (manifest_json.derivatives[0].children 
+                && manifest_json.derivatives[0].children.length > 1
+                && manifest_json.derivatives[0].children[1].children
+                && manifest_json.derivatives[0].children[1].children.length > 0
+                && manifest_json.derivatives[0].children[1].children[0].urn) {
+                const svfUrn = manifest_json.derivatives[0].children[1].children[0].urn;
+                client.set('svfurn', svfUrn, redis.print);
+              }
+            }
             res.status(200).send(manifest_json);
           })
           .catch(function(err) {
@@ -169,6 +218,28 @@ function createBucketIfNotExist(bucketsApi, oAuth2TwoLegged) {
 
 function getBucketDetails(bucketsApi, oAuth2TwoLegged) {
   return bucketsApi.getBucketDetails(config.BUCKET_KEY, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials());
+}
+
+function getDerivativeUrn(token, objectId, svfUrn) {
+  const base64Urn = new Buffer.from(objectId).toString('base64');
+  const derivativeUrn = encodeURIComponent(svfUrn);
+  const endpoint = config.DERIVATIVE_BASE_ENDPOINT + '/designdata/' + base64Urn + '/manifest/' + derivativeUrn;
+  logInfoToConsole('/designdata/:urn/manifest/:derivativeurn', 'GET', endpoint, null);
+  return fetch(endpoint, {
+    method: 'GET',
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+    .then((res) => {
+      try {
+        const svfFile = fs.createWriteStream(config.SVF_FILE_PATH);
+        res.body.pipe(svfFile);
+      } catch (err) {
+        console.error('ERROR: Failed to write binary body to file! ' + err);
+      }
+    })
+    .catch((err) => {
+      console.error('ERROR: Failed to get derivative urn! ' + err);
+    });
 }
 
 function getManifest(token, objectId) {
@@ -249,4 +320,24 @@ function uploadfileToBucket(objectsApi, oAuth2TwoLegged, filePath) {
       }
     });
   });
+}
+
+function uploadToS3Bucket(svfFilePath) {
+  const s3 = new AWS.S3({apiVersion: '2006-03-01'});
+  let uploadParams = {Bucket: config.AWS_S3_BUCKET};
+  const fileStream = fs.createReadStream(svfFilePath);
+  fileStream.on('error', function(err) {
+    console.log('File Error', err);
+  });
+  uploadParams.Body = fileStream;
+  uploadParams.Key = path.basename(svfFilePath);
+  // call S3 to retrieve upload file to specified bucket
+  const uploadPromise = s3.upload(uploadParams).promise();
+  return uploadPromise
+    .then(function(data) {
+      console.info('INFO: Successfully uploaded SVF file to S3! ' + JSON.stringify(data));
+    })
+    .catch(function(err) {
+      console.error('ERROR: Failed to upload SVF file to S3! ' + err);
+    });
 }
