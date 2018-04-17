@@ -12,4 +12,8 @@ module.exports = {
   // Autodesk Data Management settings
   BUCKET_KEY: 'reality-capture-output',
   OUTPUT_FILE_PATH: '/tmp/reality-capture-output.zip',
+  SVF_FILE_PATH: '/tmp/result.obj.svf',
+  // Amazon settings
+  AWS_S3_BASE_ENDPOINT: 'https://s3.amazonaws.com',
+  AWS_S3_BUCKET: '<your bucket name>',
 };
