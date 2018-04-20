@@ -7,10 +7,12 @@ const express = require('express');
 const fetch = require('node-fetch');
 const forgeSDK = require('forge-apis');
 const fs = require('fs');
+const _ = require('lodash');
 const path = require('path');
 const redis = require('redis');
 const request = require('request');
 const unzip = require('unzip');
+const Zip = require('node-zip');
 
 // Load configuration settings
 const config = require('./config');
@@ -21,9 +23,6 @@ client.auth(process.env.REDIS_PASSWORD, function(err) {
   if (err) { console.error('ERROR: Redis authentification failed: ' + err); };
 });
 client.on('connect', function() { console.info('INFO: Connected to Redis'); });
-
-// Load Expo SDK client
-const expo = new Expo();
 
 // Amazon init
 AWS.config.update({region: 'us-east-1'});
@@ -69,7 +68,7 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
         if(!credentials) { res.status(500).send('Empty or undefined credentials!'); }
         createBucketIfNotExist(bucketsApi, oAuth2TwoLegged).then(function(bucket_json) {
           if(!bucket_json) { res.status(500).send('Empty or undefined bucket response!'); }
-          const zipFile = fs.createWriteStream(config.OUTPUT_FILE_PATH);
+          const zipFile = fs.createWriteStream(config.RECAP_OUTPUT_FILE_PATH);
           client.get('photoscenelink', function(err, photoscenelink) {
             if (err) { res.status(500).send({'ERROR': err}); }
             console.info('INFO: Got photoscenelink value: ' + photoscenelink);
@@ -78,11 +77,14 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
               request(photoscenelink)
                 .pipe(zipFile)
                 .on('close', () => {
-                  console.info('INFO: Output file written to ' + config.OUTPUT_FILE_PATH);
-                  fs.createReadStream(config.OUTPUT_FILE_PATH)
+                  console.info('INFO: Output file written to ' + config.RECAP_OUTPUT_FILE_PATH);
+                  fs.createReadStream(config.RECAP_OUTPUT_FILE_PATH)
                     .pipe(unzip.Parse())
                     .on('entry', function(entry) {
                       const fileName = entry.path;
+                      if (fileName === 'result.mtl') { 
+                        // do something here 
+                      }
                       if (fileName === 'result.obj') {
                         entry.pipe(fs.createWriteStream('/tmp/result.obj'))
                           .on('finish', () => {
@@ -123,36 +125,43 @@ app.use('/data', dataRouter);
 
 // Forge derivative endpoints
 const derivativeRouter = express.Router();
-derivativeRouter.get('/getDerivativeUrn', function(req, res) {
-  client.get('objectid', function(err, objectid) {
-    if(err) { res.status(500).send(err); }
-    client.get('svfurn', function(err, svfurn) {
-      if(err) { res.status(500).send(err); }
-      client.get('token', function(err, token) {
-        if(err) { res.status(500).send(err); }
-        if(objectid, svfurn, token) {
-          getDerivativeUrn(token, objectid, svfurn)
-            .then(function() {
-              try {
-                const svfInfo = fs.statSync(config.SVF_FILE_PATH);
-                console.info('INFO: downloaded derivative urn.');
-                console.info('INFO: downloaded file size ' + svfInfo.size + ' Bytes.');
-                uploadToS3Bucket(config.SVF_FILE_PATH)
-                  .then(function() {
-                    console.info('INFO: SVF file has been successfully uploaded to S3!');
-                    res.send({'INFO': 'SVF file has been successfully uploaded to S3!'});
-                  });
-              } catch(err) {
-                console.error('Failed to get file stats! ' + err);
+derivativeRouter.get('/downloadBubbles', function(req, res) {
+  client.get('objectid', function(err, urn) {
+    const autoRefresh = false;
+    const oAuth2TwoLegged = new forgeSDK.AuthClientTwoLegged(
+      process.env.FORGE_APP_ID,
+      process.env.FORGE_APP_SECRET, 
+      config.SCOPES,
+      autoRefresh
+    );
+    oAuth2TwoLegged.authenticate().then(function(credentials) {
+      download(oAuth2TwoLegged, credentials, urn)
+        .then((files) => {
+          console.info('download bubbles result: ' + JSON.stringify(files));
+          if(files.length > 0) {
+            let promise;
+            let promiseChain = [];
+            for (let index in files) {
+              promise = uploadToS3Bucket(files[index]);
+              promiseChain.push(promise);
+            }
+            Promise.all(promiseChain)
+              .then(function(results) {
+                console.info('INFO: Successfully uploaded bubbles to S3!');
+                res.status(200).send(results);
+              })
+              .catch(function(err) {
+                console.error('ERROR: Failed to upload bubbles to S3!');
                 res.status(500).send(err);
-              }
-              
-            })
-            .catch(function(err) {
-              res.status(500).send(err);
-            });
-        }
-      });
+              });
+          }
+        })
+        .catch(function(err) {
+          console.error('ERROR: Failed to download bubbles: ' + JSON.stringify(err));
+          res.status(500).send(err);
+        });
+    }, function(err) {
+      res.status(500).send(err);
     });
   });
 });
@@ -164,25 +173,13 @@ derivativeRouter.get('/getManifest', function(req, res) {
         getManifest(token, objectid)
           .then(function(manifest_json) {
             if(!manifest_json) { res.status(500).send('Empty or undefined manifest response!'); }
-            if( manifest_json.derivatives 
-              && manifest_json.derivatives.length > 0 ) {
-              if (manifest_json.derivatives[0].children 
-                && manifest_json.derivatives[0].children.length > 1
-                && manifest_json.derivatives[0].children[1].children
-                && manifest_json.derivatives[0].children[1].children.length > 0
-                && manifest_json.derivatives[0].children[1].children[0].urn) {
-                const svfUrn = manifest_json.derivatives[0].children[1].children[0].urn;
-                client.set('svfurn', svfUrn, redis.print);
-              }
-            }
-            res.status(200).send(manifest_json);
+            if(manifest_json) { res.status(200).send(manifest_json); }
           })
           .catch(function(err) {
             res.status(500).send(err);
           });
       }
     });
-    
   });
 });
 app.use('/derivative', derivativeRouter);
@@ -216,36 +213,116 @@ function createBucketIfNotExist(bucketsApi, oAuth2TwoLegged) {
   });
 }
 
+function download(oAuth2TwoLegged, credentials, urn) {
+  return new Promise(async(resolve, reject) => {
+    try {
+      // create target directory
+      if(!fs.existsSync(config.BUBBLES_OUTPUT_DIR)) {
+        fs.mkdirSync(config.BUBBLES_OUTPUT_DIR);
+      }
+      // get auth token
+      const derivativesAPI = new forgeSDK.DerivativesApi();
+      const base64Urn = new Buffer.from(urn).toString('base64');
+      const manifest = await derivativesAPI.getManifest(base64Urn, {}, oAuth2TwoLegged, credentials);
+      // harvest derivatives
+      const derivatives = await getDerivatives(credentials.access_token, manifest.body);
+      // format derivative resources
+      const nestedDerivatives = derivatives.map((item) => {
+        return item.files.map((file) => {
+          const localPath = path.resolve(config.BUBBLES_OUTPUT_DIR, item.localPath);
+          return {
+            basePath: item.basePath,
+            guid: item.guid,
+            mime: item.mime,
+            fileName: file,
+            urn: item.urn,
+            localPath
+          };
+        });
+      });
+      // flatten resources
+      const derivativesList = _.flattenDeep(nestedDerivatives);
+      // creates async download tasks for each
+      // derivative file
+      const downloadTasks = derivativesList.map((derivative) => {
+        return new Promise(async(resolve) => {
+          const urn = path.join(derivative.basePath, derivative.fileName);
+          const data = await getDerivative(credentials.access_token, urn);
+          const filename = path.resolve(derivative.localPath, derivative.fileName);
+          await saveToDisk(data, filename);
+          resolve(filename);
+        });
+      });
+      // wait for all files to be downloaded
+      const files = await Promise.all(downloadTasks);
+      resolve(files);
+    } catch(err) {
+      console.error('ERROR: download of bubbles failed! ' + JSON.stringify(err));
+      reject(err);
+    }
+  });
+}
+
 function getBucketDetails(bucketsApi, oAuth2TwoLegged) {
   return bucketsApi.getBucketDetails(config.BUCKET_KEY, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials());
 }
 
-function getDerivativeUrn(token, objectId, svfUrn) {
-  const base64Urn = new Buffer.from(objectId).toString('base64');
-  const derivativeUrn = encodeURIComponent(svfUrn);
-  const endpoint = config.DERIVATIVE_BASE_ENDPOINT + '/designdata/' + base64Urn + '/manifest/' + derivativeUrn;
-  logInfoToConsole('/designdata/:urn/manifest/:derivativeurn', 'GET', endpoint, null);
-  return fetch(endpoint, {
-    method: 'GET',
-    headers: { 'Authorization': 'Bearer ' + token }
-  })
-    .then((res) => {
-      try {
-        const svfFile = fs.createWriteStream(config.SVF_FILE_PATH);
-        res.body.pipe(svfFile);
-      } catch (err) {
-        console.error('ERROR: Failed to write binary body to file! ' + err);
-      }
-    })
-    .catch((err) => {
-      console.error('ERROR: Failed to get derivative urn! ' + err);
+function getDerivative (token, urn) {
+  return new Promise(async(resolve, reject) => {
+    const baseUrl = 'https://developer.api.autodesk.com/';
+    const endpoint = baseUrl + `derivativeservice/v2/derivatives/${urn}`;
+    request({
+      uri: endpoint,
+      method: 'GET',
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept-Encoding': 'gzip, deflate'
+      },
+      encoding: null
+    }, (err, response, body) => {
+      if (err) { return reject(err); }
+      if (body && body.errors) { return reject(body.errors); }
+      if ([200, 201, 202].indexOf(response.statusCode) < 0) { return reject(response); }
+      return resolve(body || {});
     });
+  });
+}
+
+function getDerivatives (token, manifest) {
+  return new Promise(async(resolve, reject) => {
+    try {
+      const items = parseManifest(manifest);
+      const derivativeTasks = items.map((item) => {
+        switch (item.mime) {
+        case 'application/autodesk-svf':
+          return getSVFDerivatives(token, item);
+        case 'application/autodesk-db':
+          return Promise.resolve(
+            Object.assign({}, item, {
+              files: [
+                'objects_attrs.json.gz',
+                'objects_vals.json.gz',
+                'objects_offs.json.gz',
+                'objects_ids.json.gz',
+                'objects_avs.json.gz',
+                item.rootFileName
+              ]}));
+        default:
+          return Promise.resolve(Object.assign({}, item, { files: [ item.rootFileName ]}));
+        }
+      });
+      const derivatives = await Promise.all(derivativeTasks);
+      return resolve(derivatives);
+    } catch(err) {
+      console.error('Failed to get derivatives! ' + err);
+      reject(err);
+    }
+  });
 }
 
 function getManifest(token, objectId) {
   const base64Urn = new Buffer.from(objectId).toString('base64');
   const endpoint = config.DERIVATIVE_BASE_ENDPOINT + '/designdata/' + base64Urn + '/manifest';
-  logInfoToConsole('/designdata/:urn/manifest', 'GET', endpoint, null);
   return fetch(endpoint, {
     method: 'GET',
     headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}
@@ -264,22 +341,90 @@ function getManifest(token, objectId) {
     });
 }
 
-function logInfoToConsole(endPoint, httpMethod, url, body) {
-  if (body) {
-    console.info('INFO: ' + httpMethod + ' ' + endPoint 
-    + '      Url: ' + url
-    + '      Body:' + JSON.stringify(body));
-  } else {
-    console.info('INFO: ' + httpMethod + ' ' + endPoint 
-    + '      Url: ' + url);
-  } 
+function getItemPathInfo (encodedURN) {
+  const urn = decodeURIComponent(encodedURN);
+  const rootFileName = urn.slice(urn.lastIndexOf ('/') + 1);
+  const basePath = urn.slice(0, urn.lastIndexOf ('/') + 1);
+  const localPathTmp = basePath.slice(basePath.indexOf ('/') + 1);
+  const localPath = localPathTmp.replace(/^output\//, '');
+  return {
+    rootFileName,
+    localPath,
+    basePath,
+    urn
+  };
 }
 
-function responseToConsole(status, body) {
-  if (status && body) {
-    console.info('INFO: Response Status: ' + status
-    + '               Body: ' + body);
-  }
+function getSVFDerivatives(token, item) {
+  return new Promise(async(resolve, reject) => {
+    try {
+      const svfPath = item.urn.slice(item.basePath.length);
+      const files = [svfPath];
+      const data = await getDerivative(token, item.urn);
+      const pack = new Zip (data, { checkCRC32: true, base64: false });
+      const manifestData = pack.files['manifest.json'].asNodeBuffer();
+      const manifest = JSON.parse(manifestData.toString('utf8'));
+      if (manifest.assets) {
+        manifest.assets.forEach((asset) => {
+          // Skip SVF embedded resources
+          if (asset.URI.indexOf('embed:/') === 0) { return; }
+          files.push(asset.URI);
+        });
+      }
+      return resolve(Object.assign({}, item, { files }));
+    } catch (ex) {
+      reject (ex);
+    }
+  });
+}
+
+function parseManifest (manifest) {
+  const items = [];
+  const parseNodeRec = (node) => {
+    const roles = [
+      'Autodesk.CloudPlatform.DesignDescription',
+      'Autodesk.CloudPlatform.PropertyDatabase',
+      'Autodesk.CloudPlatform.IndexableContent',
+      'leaflet-zip',
+      'thumbnail',
+      'graphics',
+      'preview',
+      'raas',
+      'pdf',
+      'lod',
+    ];
+    if(roles.includes(node.role)) {
+      const item = { guid: node.guid, mime: node.mime };
+      const pathInfo = getItemPathInfo(node.urn);
+      items.push (Object.assign({}, item, pathInfo));
+    }
+    if(node.children) {
+      node.children.forEach((child) => { parseNodeRec(child); });
+    }
+  };
+  parseNodeRec({ children: manifest.derivatives });
+  return items;
+}
+
+function saveToDisk (data, filename) {
+  return new Promise(async(resolve, reject) => {
+    try {
+      if(!fs.existsSync(path.dirname(filename))) {
+        fs.mkdirSync(path.dirname(filename));
+      }
+      const wstream = fs.createWriteStream(filename);
+      const ext = path.extname(filename);
+      wstream.on('finish', () => { resolve(); });
+      if (typeof data === 'object' && ext === '.json') {
+        wstream.write(JSON.stringify(data));
+      } else {
+        wstream.write(data);
+      }
+      wstream.end();
+    } catch(err) {
+      reject(err);
+    }
+  });
 }
 
 function translateToSVF(objectId, oAuth2TwoLegged) {
