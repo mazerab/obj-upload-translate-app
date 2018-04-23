@@ -36,15 +36,10 @@ Before you start, make sure you read [Serverless Code with Amazons AWS and Claud
 1. Edit the file `package.json` to change the app name on line 2. Pick a name that is unique to you.
 1. Continue editing the same file `package.json` to update the Forge App ID and secret, Amazon S3 bucket and Redis password on the setvars script line  `--set-env FORGE_APP_ID=xxx,FORGE_APP_SECRET=yyy,S3_BUCKET=reality-capture-images,REDIS_PASSWORD=zzz`
 1. Save the changes
-1. Run `npm run create` to send everything up to AWS Lambda. It will return a 'new URL', make a note of its value as you will need to input the URL in the *config.js* file under the **AWS_LAMBDA_BASE_ENDPOINT** variable.
+1. Run `npm run create` to send everything up to AWS Lambda. It will return a 'new URL'.
 
 ![npm run create](/www/assets/npm-run-create.png)
 1. Run `npm run setvars` to push the environment variables to Lambda.
-1. Open the 'new URL' in a browser
-
-**Example:** [https://adc6qwtnce.execute-api.us-east-1.amazonaws.com/demo/](https://adc6qwtnce.execute-api.us-east-1.amazonaws.com/demo/)
-
-> Remember to add a '/' or a '/index.html' to the URL.
 
 ### Updating the app
 
@@ -62,21 +57,15 @@ Anytime you need to make code changes, you should use the 'update' command to pu
 * Navigate to Lambda Functions
 * Open your new Lambda function
 * Change the Node.js version to 8.10
-
-![Node Version](/www/assets/nodejs-8.png)
 * Increase memory to 512 Mb and timeout value to 30 seconds
-
-![Timeout](/www/assets/memory-timeout.png)
 * Connect the demo alias to $LATEST version
-
-![Alias](/www/assets/demo-alias.png)
 * Save the changes
 
 ## Testing
 
-Go back to your mobile app to edit the `./constants/Config.js` file to have the correct AWS lambda endpoint in the variable named **AWS_RECAP_LAMBDA_BASE_ENDPOINT**. Save the change and submit **3 or more** images for processing by pressing the button called *"Process Photoscene"*.
+Go back to your mobile app to edit the `./constants/Config.js` file to have the correct AWS lambda endpoint in the variable named **AWS_UPLOAD_TRANSLATE_LAMBDA_BASE_ENDPOINT**. Save the change and submit **3 or more** images for processing by pressing the button called *"Process Photoscene"*.
 
-This should generate a new OBJ file. You can validate the photoscenelink has the right data by browsing to the AWS lambda function endpoint **/demo/redis/photoscenelink** and use that URL to download the OBJ file locally. 
+This should generate a new OBJ file. Wait for the OBJ file to be translated. When ready, the *View File* button will become available, click on it to launch the Forge Viewer and open the viewables. 
 
 ## Built With
 * [Amazon Lambda](https://aws.amazon.com/lambda/) - Run code without thinking about servers.
