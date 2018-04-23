@@ -3,14 +3,17 @@ An AWS lambda function to upload an OBJ file to Autodesk Cloud and translate it 
 
 ## Introduction
 
-This server app calls the Forge Data Management and Model Derivatives API to upload an OBJ file to a OSS bucket and then translate the OBJ file to a viewable format (SVF). 
+This server app uses the Forge Data Management and Model Derivatives APIs to upload an OBJ file to a OSS bucket and then translate the OBJ file to a viewable format (SVF). 
 
 The flow is simple:
 
-The mobile app lets users select image files from the camera roll and upload them to a S3 bucket.
+After the photoscene has been successfully processed, the mobile app has access to a photoscenelink URL that can be used to download the resulting OBJ file.
 
 1. The server app logs into Forge using 2-legged oAuth flow
-1. The server app 
+1. The server app uploads the OBJ file to an OSS bucket
+1. The server app translates the OBJ file to SVF format
+1. The resulting viewable files are then uploaded to S3 bucket
+1. The mobile app can now view the 3D model
 
 ## Getting Started
 
