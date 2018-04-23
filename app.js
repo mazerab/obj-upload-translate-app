@@ -20,7 +20,7 @@ const config = require('./config');
 // Load Redis
 const client = redis.createClient(config.REDIS_PORT, config.REDIS_ENDPOINT, {no_ready_check: true});
 client.auth(process.env.REDIS_PASSWORD, function(err) {
-  if (err) { console.error('ERROR: Redis authentification failed: ' + err); };
+  if (err) { console.error('ERROR: Redis authentification failed: ' + err); }
 });
 client.on('connect', function() { console.info('INFO: Connected to Redis'); });
 
