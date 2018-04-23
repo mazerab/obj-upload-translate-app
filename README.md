@@ -51,7 +51,7 @@ Before you start, make sure you read [Serverless Code with Amazons AWS and Claud
 Below I demonstrate ['Claudia.js'](https://claudiajs.com/tutorials/serverless-express.html) 'update' command to re-deploy a small code change. Claudia handles the task of zipping, uploading and re-wiring node.js endpoints to 'AWS-Lambda & API-Gateway' automatically. 
 
 1. Using your favorite text editor, open the *config.js* file from the root directory
-1. Input the correct values in **REDIS_ENDPOINT** and **AWS_LAMBDA_BASE_ENDPOINT** variables, save the changes
+1. Input the correct values in **REDIS_ENDPOINT** and **AWS_S3_BUCKET** variables, save the changes
 1. Run `npm run update`...
 
 Anytime you need to make code changes, you should use the 'update' command to push your changes to the AWS lambda function. 
