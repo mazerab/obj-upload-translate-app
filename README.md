@@ -17,7 +17,7 @@ The mobile app lets users select image files from the camera roll and upload the
 Before you start, make sure you read [Serverless Code with Amazons AWS and Claudia](https://vincetocco.com/serverless-code/) to learn more about the setup.
 
 1. Create a new repository directory
-1. Download [this repository]() and extract to the new directory
+1. Download [this repository](https://github.com/mazerab/obj-upload-translate-app/archive/master.zip) and extract to the new directory
 
 ### Prerequisites
 
