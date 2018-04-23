@@ -37,6 +37,7 @@
     "express": "^4.16.3",
     "forge-apis": "^0.4.1",
     "node-fetch": "^2.1.2",
+    "node-zip": "^1.1.1",
     "npm": "^5.8.0",
     "redis": "^2.8.0",
     "unzip": "^0.1.11"
