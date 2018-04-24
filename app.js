@@ -83,7 +83,26 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
                     .on('entry', function(entry) {
                       const fileName = entry.path;
                       if (fileName === 'result.mtl') { 
-                        // do something here 
+                        entry.pipe(fs.createWriteStream('/tmp/result.mtl'))
+                          .on('finish', () => {
+                            console.info('INFO: Finished writing to /tmp/result.mtl ...');
+                            uploadfileToBucket(objectsApi, oAuth2TwoLegged, '/tmp/result.mtl')
+                              .then(function(uploadRes) {
+                                if(!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
+                                console.info('INFO: Uploaded result.mtl file to bucket: ' + JSON.stringify(uploadRes));
+                              });
+                          });
+                      }
+                      if (fileName === 'result01.jpg') {
+                        entry.pipe(fs.createWriteStream('/tmp/result01.jpg'))
+                          .on('finish', () => { 
+                            console.info('INFO: Finished writing to /tmp/result01.jpg ...');
+                            uploadfileToBucket(objectsApi, oAuth2TwoLegged, '/tmp/result01.jpg')
+                              .then(function(uploadRes) {
+                                if(!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
+                                console.info('INFO: Uploaded result01.jpg file to bucket: ' + JSON.stringify(uploadRes));
+                              });
+                          });
                       }
                       if (fileName === 'result.obj') {
                         entry.pipe(fs.createWriteStream('/tmp/result.obj'))
