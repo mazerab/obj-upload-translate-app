@@ -68,63 +68,44 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
         if(!credentials) { res.status(500).send('Empty or undefined credentials!'); }
         createBucketIfNotExist(bucketsApi, oAuth2TwoLegged).then(function(bucket_json) {
           if(!bucket_json) { res.status(500).send('Empty or undefined bucket response!'); }
-          const zipFile = fs.createWriteStream(config.RECAP_OUTPUT_FILE_PATH);
           client.get('photoscenelink', function(err, photoscenelink) {
             if (err) { res.status(500).send({'ERROR': err}); }
             console.info('INFO: Got photoscenelink value: ' + photoscenelink);
             if (photoscenelink.startsWith('http')) {
               console.info('INFO: Initiating download of scenelink at: ' + photoscenelink);
-              request(photoscenelink)
-                .pipe(zipFile)
-                .on('close', () => {
+              request
+                .get(photoscenelink)
+                .on('error', function(err) { console.error('ERROR: Failed to get photoscenelink: ' + err); })
+                .pipe(fs.createWriteStream(config.RECAP_OUTPUT_FILE_PATH))
+                .on('finish', () => {
                   console.info('INFO: Output file written to ' + config.RECAP_OUTPUT_FILE_PATH);
-                  fs.createReadStream(config.RECAP_OUTPUT_FILE_PATH)
-                    .pipe(unzip.Parse())
-                    .on('entry', function(entry) {
-                      const fileName = entry.path;
-                      if (fileName === 'result.mtl') { 
-                        entry.pipe(fs.createWriteStream('/tmp/result.mtl'))
-                          .on('finish', () => {
-                            console.info('INFO: Finished writing to /tmp/result.mtl ...');
-                            uploadfileToBucket(objectsApi, oAuth2TwoLegged, '/tmp/result.mtl')
-                              .then(function(uploadRes) {
-                                if(!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
-                                console.info('INFO: Uploaded result.mtl file to bucket: ' + JSON.stringify(uploadRes));
-                              });
+                  try {
+                    const zipFileInfo = fs.statSync(config.RECAP_OUTPUT_FILE_PATH);
+                    console.info('INFO: Zip file size: ' + zipFileInfo.size);
+                    if(zipFileInfo.size <= 22) { 
+                      console.error('ERROR: Found corrupt zip file exiting ...'); 
+                      throw new Error('ERROR: Found corrupt zip file, exiting!'); 
+                    }
+                    uploadfileToBucket(objectsApi, oAuth2TwoLegged, config.RECAP_OUTPUT_FILE_PATH)
+                      .then(function(uploadRes) {
+                        console.info('INFO: Upload results: ' + JSON.stringify(uploadRes));
+                        if(!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
+                        client.set('objectid', uploadRes.body.objectId, redis.print);
+                        translateToSVF(uploadRes.body.objectId, oAuth2TwoLegged)
+                          .then(function(translateRes) {
+                            console.info('INFO: translation results: ' + JSON.stringify(translateRes));
+                            if(!translateRes) { res.status(500).send({'ERROR': 'Empty or undefined translation response!'}); }
+                            res.send(translateRes);
+                            res.end();
+                          }, function(translateErr) {
+                            res.status(500).send({'ERROR': translateErr});
                           });
-                      }
-                      if (fileName === 'result01.jpg') {
-                        entry.pipe(fs.createWriteStream('/tmp/result01.jpg'))
-                          .on('finish', () => { 
-                            console.info('INFO: Finished writing to /tmp/result01.jpg ...');
-                            uploadfileToBucket(objectsApi, oAuth2TwoLegged, '/tmp/result01.jpg')
-                              .then(function(uploadRes) {
-                                if(!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
-                                console.info('INFO: Uploaded result01.jpg file to bucket: ' + JSON.stringify(uploadRes));
-                              });
-                          });
-                      }
-                      if (fileName === 'result.obj') {
-                        entry.pipe(fs.createWriteStream('/tmp/result.obj'))
-                          .on('finish', () => {
-                            console.info('INFO: Finished writing to /tmp/result.obj ...');
-                            uploadfileToBucket(objectsApi, oAuth2TwoLegged, '/tmp/result.obj')
-                              .then(function(uploadRes) {
-                                if(!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
-                                client.set('objectid', uploadRes.body.objectId, redis.print);
-                                translateToSVF(uploadRes.body.objectId, oAuth2TwoLegged).then(function(translateRes) {
-                                  if(!translateRes) { res.status(500).send({'ERROR': 'Empty or undefined translation response!'}); }
-                                  res.send(translateRes);
-                                  res.end();
-                                }, function(translateErr) {
-                                  res.status(500).send({'ERROR': translateErr});
-                                });
-                              }, function(uploadErr) {
-                                res.status(500).send({'ERROR': uploadErr});
-                              });
-                          });
-                      } else { entry.autodrain(); }
-                    });
+                      }, function(uploadErr) {
+                        res.status(500).send({'ERROR': uploadErr});
+                      });
+                  } catch(err) {
+                    console.error('ERROR: Failed to process scenelink zip file!');
+                  }
                 });
             }
           });
@@ -451,10 +432,12 @@ function translateToSVF(objectId, oAuth2TwoLegged) {
     const derivativeApi = new forgeSDK.DerivativesApi();
     const base64Urn = new Buffer.from(objectId).toString('base64');
     const job = {
-      'input': { 'urn': base64Urn },
+      'input': { 'urn': base64Urn, 'compressedUrn': true, 'rootFilename': 'result.obj' },
       'output': { 'formats': [ { 'type': 'svf', 'views': [ '2d', '3d'] } ] }
     };
     const options = { 'xAdsForce': true };
+    console.info('INFO: Submitting translation job for urn: ' + objectId);
+    console.info('INFO: Job details: ' + JSON.stringify(job));
     derivativeApi.translate(job, options, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials())
       .then(function(resp) {
         if (resp.statusCode === 200) {
