@@ -11,7 +11,6 @@ const _ = require('lodash');
 const path = require('path');
 const redis = require('redis');
 const request = require('request');
-const unzip = require('unzip');
 const Zip = require('node-zip');
 
 // Load configuration settings
