@@ -7,6 +7,7 @@ const express = require('express');
 const fetch = require('node-fetch');
 const forgeSDK = require('forge-apis');
 const fs = require('fs');
+const helmet = require('helmet');
 const _ = require('lodash');
 const path = require('path');
 const redis = require('redis');
@@ -28,6 +29,7 @@ AWS.config.update({region: 'us-east-1'});
 
 // Load express
 const app = express();
+app.use(helmet());
 
 // Load bodyParser
 app.use(bodyParser.urlencoded({ extended: false }));
