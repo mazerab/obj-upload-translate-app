@@ -54,8 +54,8 @@ app.use('/expo', expoRouter);
 const dataRouter = express.Router();
 dataRouter.post('/uploadAndTranslate', function(req, res) {
   client.get('objectid', function(err, objectid) {
-    if(err) { res.status(500).send(err); }
-    if(objectid === 'blank') {
+    if (err) { res.status(500).send(err); }
+    if (objectid === 'blank') {
       const bucketsApi = new forgeSDK.BucketsApi(); // Buckets Client
       const objectsApi = new forgeSDK.ObjectsApi(); // Objects Client
       const autoRefresh = true;
@@ -66,9 +66,9 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
         autoRefresh
       );
       oAuth2TwoLegged.authenticate().then(function(credentials) {
-        if(!credentials) { res.status(500).send('Empty or undefined credentials!'); }
+        if (!credentials) { res.status(500).send('Empty or undefined credentials!'); }
         createBucketIfNotExist(bucketsApi, oAuth2TwoLegged).then(function(bucket_json) {
-          if(!bucket_json) { res.status(500).send('Empty or undefined bucket response!'); }
+          if (!bucket_json) { res.status(500).send('Empty or undefined bucket response!'); }
           client.get('photoscenelink', function(err, photoscenelink) {
             if (err) { res.status(500).send({'ERROR': err}); }
             console.info('INFO: Got photoscenelink value: ' + photoscenelink);
@@ -83,19 +83,19 @@ dataRouter.post('/uploadAndTranslate', function(req, res) {
                   try {
                     const zipFileInfo = fs.statSync(config.RECAP_OUTPUT_FILE_PATH);
                     console.info('INFO: Zip file size: ' + zipFileInfo.size);
-                    if(zipFileInfo.size <= 22) { 
+                    if (zipFileInfo.size <= 22) { 
                       console.error('ERROR: Found corrupt zip file exiting ...'); 
                       throw new Error('ERROR: Found corrupt zip file, exiting!'); 
                     }
                     uploadfileToBucket(objectsApi, oAuth2TwoLegged, config.RECAP_OUTPUT_FILE_PATH)
                       .then(function(uploadRes) {
                         console.info('INFO: Upload results: ' + JSON.stringify(uploadRes));
-                        if(!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
+                        if (!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
                         client.set('objectid', uploadRes.body.objectId, redis.print);
                         translateToSVF(uploadRes.body.objectId, oAuth2TwoLegged)
                           .then(function(translateRes) {
                             console.info('INFO: translation results: ' + JSON.stringify(translateRes));
-                            if(!translateRes) { res.status(500).send({'ERROR': 'Empty or undefined translation response!'}); }
+                            if (!translateRes) { res.status(500).send({'ERROR': 'Empty or undefined translation response!'}); }
                             res.send(translateRes);
                             res.end();
                           }, function(translateErr) {
@@ -139,7 +139,7 @@ derivativeRouter.get('/downloadBubbles', function(req, res) {
       download(oAuth2TwoLegged, credentials, urn)
         .then((files) => {
           console.info('download bubbles result: ' + JSON.stringify(files));
-          if(files.length > 0) {
+          if (files.length > 0) {
             let promise;
             let promiseChain = [];
             for (let index in files) {
@@ -169,12 +169,12 @@ derivativeRouter.get('/downloadBubbles', function(req, res) {
 derivativeRouter.get('/getManifest', function(req, res) {
   client.get('objectid', function(err, objectid) {
     client.get('token', function(err, token) {
-      if(err) { res.status(500).send(err); }
-      if(objectid && token) {
+      if (err) { res.status(500).send(err); }
+      if (objectid && token) {
         getManifest(token, objectid)
           .then(function(manifest_json) {
-            if(!manifest_json) { res.status(500).send('Empty or undefined manifest response!'); }
-            if(manifest_json) { res.status(200).send(manifest_json); }
+            if (!manifest_json) { res.status(500).send('Empty or undefined manifest response!'); }
+            if (manifest_json) { res.status(200).send(manifest_json); }
           })
           .catch(function(err) {
             res.status(500).send(err);
@@ -218,7 +218,7 @@ function download(oAuth2TwoLegged, credentials, urn) {
   return new Promise(async(resolve, reject) => {
     try {
       // create target directory
-      if(!fs.existsSync(config.BUBBLES_OUTPUT_DIR)) {
+      if (!fs.existsSync(config.BUBBLES_OUTPUT_DIR)) {
         fs.mkdirSync(config.BUBBLES_OUTPUT_DIR);
       }
       // get auth token
@@ -394,12 +394,12 @@ function parseManifest (manifest) {
       'pdf',
       'lod',
     ];
-    if(roles.includes(node.role)) {
+    if (roles.includes(node.role)) {
       const item = { guid: node.guid, mime: node.mime };
       const pathInfo = getItemPathInfo(node.urn);
       items.push (Object.assign({}, item, pathInfo));
     }
-    if(node.children) {
+    if (node.children) {
       node.children.forEach((child) => { parseNodeRec(child); });
     }
   };
@@ -410,7 +410,7 @@ function parseManifest (manifest) {
 function saveToDisk (data, filename) {
   return new Promise(async(resolve, reject) => {
     try {
-      if(!fs.existsSync(path.dirname(filename))) {
+      if (!fs.existsSync(path.dirname(filename))) {
         fs.mkdirSync(path.dirname(filename));
       }
       const wstream = fs.createWriteStream(filename);
