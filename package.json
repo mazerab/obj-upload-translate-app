@@ -6,7 +6,7 @@
   "scripts": {
     "create": "claudia create --handler lambda.handler --deploy-proxy-api --region us-east-1 -name obj-upload-translate-service --role lambda-claudia-executor --version demo",
     "destroy": "claudia destroy",
-    "setvars": "claudia set-version --version demo --set-env FORGE_APP_ID=xxx,FORGE_APP_SECRET=yyy,S3_BUCKET=reality-capture-images,REDIS_PASSWORD=zzz",
+    "setvars": "claudia set-version --version demo --set-env FORGE_APP_ID=xxx,FORGE_APP_SECRET=xxx,S3_BUCKET=xxx,REDIS_PASSWORD=xxx",
     "test": "echo \"Error: no test specified\" && exit 1",
     "update": "claudia update --version demo"
   },
@@ -30,17 +30,23 @@
   },
   "homepage": "https://github.com/mazerab/obj-upload-translate-app#readme",
   "dependencies": {
-    "aws-serverless-express": "^3.1.3",
-    "body-parser": "^1.18.2",
+    "aws-sdk": "^2.282.1",
+    "aws-serverless-express": "^3.2.0",
+    "body-parser": "^1.18.3",
     "claudia": "^3.4.1",
-    "expo-server-sdk": "^2.3.3",
+    "del": "^3.0.0",
+    "expo-server-sdk": "^2.4.0",
     "express": "^4.16.3",
-    "forge-apis": "^0.4.1",
-    "helmet": "^3.12.0",
-    "node-fetch": "^2.1.2",
+    "forge-apis": "^0.4.3",
+    "helmet": "^3.13.0",
+    "lodash": "^4.17.10",
     "node-zip": "^1.1.1",
-    "npm": "^5.8.0",
+    "npm": "^5.10.0",
+    "path": "^0.12.7",
     "redis": "^2.8.0",
-    "unzip": "^0.1.11"
+    "request": "^2.87.0",
+    "request-promise": "^4.2.2",
+    "standard": "^11.0.1",
+    "zlib": "^1.0.5"
   }
 }
