@@ -84,7 +84,7 @@ This should generate a new OBJ file. Wait for the OBJ file to be translated. Whe
 
 ## Authors
 
-Bastien Mazeran, Autodesk Inc.
+Bastien Mazeran [@BastienMazeran](https://twitter.com/BastienMazeran), Autodesk Inc.
 
 ## License
 
