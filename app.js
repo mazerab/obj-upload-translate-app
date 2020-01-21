@@ -1,45 +1,45 @@
 'use strict';
 
-import { config as _config, S3 } from 'aws-sdk';
-import { urlencoded, json as _json } from 'body-parser';
-import { isExpoPushToken } from 'expo-server-sdk';
-import express, { Router } from 'express';
-import { BucketsApi, ObjectsApi, AuthClientTwoLegged, DerivativesApi } from 'forge-apis';
-import { createWriteStream, statSync, existsSync, mkdirSync, readFile, createReadStream } from 'fs';
-import helmet from 'helmet';
-import { flattenDeep } from 'lodash';
-import { resolve as _resolve, join, dirname, extname, basename } from 'path';
-import { createClient, print } from 'redis';
-import request, { get } from 'request';
-import rp from 'request-promise';
-import Zip from 'node-zip';
+const AWS = require('aws-sdk');
+const bodyParser = require('body-parser');
+const Expo = require('expo-server-sdk');
+const express = require('express');
+const forgeSDK = require('forge-apis');
+const fs = require('fs');
+const helmet = require('helmet');
+const _ = require('lodash');
+const path = require('path');
+const redis = require('redis');
+const request = require('request');
+const rp = require('request-promise');
+const Zip = require('node-zip');
 
 // Load configuration settings
-import { REDIS_PORT, REDIS_ENDPOINT, SCOPES, RECAP_OUTPUT_FILE_PATH, BUCKET_KEY, BUBBLES_OUTPUT_DIR, TLS_VERSION, DERIVATIVE_BASE_ENDPOINT, AWS_S3_BUCKET } from './config';
+const config = require('./config');
 
 // Load Redis
-const client = createClient(REDIS_PORT, REDIS_ENDPOINT, {no_ready_check: true});
+const client = redis.createClient(config.REDIS_PORT, config.REDIS_ENDPOINT, { no_ready_check: true });
 client.auth(process.env.REDIS_PASSWORD, function (err) {
-  if (err) { console.error('ERROR: Redis authentification failed: ' + err); }
+  if (err) { console.error(`ERROR: Redis authentification failed: ${err}`); }
 })
 client.on('connect', function () { console.info('INFO: Connected to Redis'); })
 
 // Amazon init
-_config.update({region: 'us-east-1'});
+AWS.config.update({region: 'us-east-1'});
 
 // Load express
 const app = express();
 app.use(helmet());
 
 // Load bodyParser
-app.use(urlencoded({ extended: false }));
-app.use(_json());
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
 // Expo push endpoints
-const expoRouter = Router()
+const expoRouter = express.Router();
 expoRouter.post('/tokens', function (req, res) {
   if (!req.body) { res.status(500).send({'Expo': 'Missing body!'}); }
-  if (isExpoPushToken(req.body.pushToken)) {
+  if (Expo.isExpoPushToken(req.body.pushToken)) {
     client.set('pushToken', req.body.pushToken, function (err, reply) {
       if (reply) { res.send({'pushToken': reply, 'source': 'expo cache'}); }
       if (err) { res.status(500).send({'Expo': err}); }
@@ -51,18 +51,18 @@ expoRouter.post('/tokens', function (req, res) {
 app.use('/expo', expoRouter);
 
 // Forge Data Management endpoints
-const dataRouter = Router();
+const dataRouter = express.Router();
 dataRouter.post('/uploadAndTranslate', function (req, res) {
   client.get('objectid', function (err, objectid) {
-    if (err) { res.status(500).send(err); }
+    if (err) { res.status(500).send(err) }
     if (objectid === 'blank') {
-      const bucketsApi = new BucketsApi(); // Buckets Client
-      const objectsApi = new ObjectsApi(); // Objects Client
+      const bucketsApi = new forgeSDK.BucketsApi(); // Buckets Client
+      const objectsApi = new forgeSDK.ObjectsApi(); // Objects Client
       const autoRefresh = true;
-      const oAuth2TwoLegged = new AuthClientTwoLegged(
+      const oAuth2TwoLegged = new forgeSDK.AuthClientTwoLegged(
         process.env.FORGE_APP_ID,
         process.env.FORGE_APP_SECRET,
-        SCOPES,
+        config.SCOPES,
         autoRefresh
       );
       oAuth2TwoLegged.authenticate().then(function (credentials) {
@@ -72,29 +72,30 @@ dataRouter.post('/uploadAndTranslate', function (req, res) {
             if (!bucketJson) { res.status(500).send('Empty or undefined bucket response!'); }
             client.get('photoscenelink', function (err, photoscenelink) {
               if (err) { res.status(500).send({'ERROR': err}); }
-              console.info('INFO: Got photoscenelink value: ' + photoscenelink);
+              console.info(`INFO: Got photoscenelink value: ${photoscenelink}`);
               if (photoscenelink.startsWith('http')) {
-                console.info('INFO: Initiating download of scenelink at: ' + photoscenelink);
-                get(photoscenelink)
-                  .on('error', function (err) { console.error('ERROR: Failed to get photoscenelink: ' + err); })
-                  .pipe(createWriteStream(RECAP_OUTPUT_FILE_PATH))
+                console.info(`INFO: Initiating download of scenelink at: ${photoscenelink}`);
+                request
+                  .get(photoscenelink)
+                  .on('error', function (err) { console.error(`ERROR: Failed to get photoscenelink: ${err}`); })
+                  .pipe(fs.createWriteStream(config.RECAP_OUTPUT_FILE_PATH))
                   .on('finish', () => {
-                    console.info('INFO: Output file written to ' + RECAP_OUTPUT_FILE_PATH);
+                    console.info(`INFO: Output file written to ${config.RECAP_OUTPUT_FILE_PATH}`);
                     try {
-                      const zipFileInfo = statSync(RECAP_OUTPUT_FILE_PATH);
-                      console.info('INFO: Zip file size: ' + zipFileInfo.size);
+                      const zipFileInfo = fs.statSync(config.RECAP_OUTPUT_FILE_PATH);
+                      console.info(`INFO: Zip file size: ${zipFileInfo.size}`);
                       if (zipFileInfo.size <= 22) {
                         console.error('ERROR: Found corrupt zip file exiting ...');
                         throw new Error('ERROR: Found corrupt zip file, exiting!');
                       }
-                      uploadfileToBucket(objectsApi, oAuth2TwoLegged, RECAP_OUTPUT_FILE_PATH)
+                      uploadfileToBucket(objectsApi, oAuth2TwoLegged, config.RECAP_OUTPUT_FILE_PATH)
                         .then(function (uploadRes) {
-                          console.info('INFO: Upload results: ' + JSON.stringify(uploadRes));
+                          console.info(`INFO: Upload results: ${JSON.stringify(uploadRes)}`);
                           if (!uploadRes) { res.status(500).send({'ERROR': 'Empty or undefined upload response!'}); }
-                          client.set('objectid', uploadRes.body.objectId, print)
+                          client.set('objectid', uploadRes.body.objectId, redis.print)
                           translateToSVF(uploadRes.body.objectId, oAuth2TwoLegged)
                             .then(function (translateRes) {
-                              console.info('INFO: translation results: ' + JSON.stringify(translateRes));
+                              console.info(`INFO: translation results: ${JSON.stringify(translateRes)}`);
                               if (!translateRes) { res.status(500).send({'ERROR': 'Empty or undefined translation response!'}); }
                               res.send(translateRes);
                               res.end();
@@ -125,21 +126,21 @@ dataRouter.post('/uploadAndTranslate', function (req, res) {
 app.use('/data', dataRouter);
 
 // Forge derivative endpoints
-const derivativeRouter = Router();
+const derivativeRouter = express.Router();
 derivativeRouter.get('/downloadBubbles', function (req, res) {
   client.get('objectid', function (err, urn) {
     if (err) { res.status(500).send({'ERROR': err}); }
     const autoRefresh = false;
-    const oAuth2TwoLegged = new AuthClientTwoLegged(
+    const oAuth2TwoLegged = new forgeSDK.AuthClientTwoLegged(
       process.env.FORGE_APP_ID,
       process.env.FORGE_APP_SECRET,
-      SCOPES,
+      config.SCOPES,
       autoRefresh
     );
     oAuth2TwoLegged.authenticate().then(function (credentials) {
       download(oAuth2TwoLegged, credentials, urn)
         .then((files) => {
-          console.info('download bubbles result: ' + JSON.stringify(files));
+          console.info(`download bubbles result: ${JSON.stringify(files)}`);
           if (files.length > 0) {
             let promise;
             let promiseChain = [];
@@ -159,7 +160,7 @@ derivativeRouter.get('/downloadBubbles', function (req, res) {
           }
         })
         .catch(function (err) {
-          console.error('ERROR: Failed to download bubbles: ' + JSON.stringify(err));
+          console.error(`ERROR: Failed to download bubbles: ${JSON.stringify(err)}`);
           res.status(500).send(err);
         })
     }, function (err) {
@@ -176,7 +177,7 @@ derivativeRouter.get('/getManifest', function (req, res) {
         getManifest(token, objectid)
           .then(function (manifestJson) {
             if (!manifestJson) { res.status(500).send('Empty or undefined manifest response!'); }
-            if (manifestJson) { res.status(200).send(manifestJson); }
+            res.status(200).send(manifestJson);
           })
           .catch(function (err) {
             res.status(500).send(err);
@@ -187,10 +188,10 @@ derivativeRouter.get('/getManifest', function (req, res) {
 })
 app.use('/derivative', derivativeRouter);
 
-export default app;
+module.exports = app;
 
 function createBucket (bucketsApi, oAuth2TwoLegged) {
-  const bucketJson = {'bucketKey': BUCKET_KEY, 'policyKey': 'transient'};
+  const bucketJson = {'bucketKey': config.BUCKET_KEY, 'policyKey': 'transient'};
   return bucketsApi.createBucket(bucketJson, {}, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials());
 }
 
@@ -214,19 +215,19 @@ function createBucketIfNotExist (bucketsApi, oAuth2TwoLegged) {
         } else {
           reject(err);
         }
-      })
-  })
+      });
+  });
 }
 
 function download (oAuth2TwoLegged, credentials, urn) {
   return new Promise(async (resolve, reject) => {
     try {
       // create target directory
-      if (!existsSync(BUBBLES_OUTPUT_DIR)) {
-        mkdirSync(BUBBLES_OUTPUT_DIR);
+      if (!fs.existsSync(config.BUBBLES_OUTPUT_DIR)) {
+        fs.mkdirSync(config.BUBBLES_OUTPUT_DIR);
       }
       // get auth token
-      const derivativesAPI = new DerivativesApi();
+      const derivativesAPI = new forgeSDK.DerivativesApi();
       const base64Urn = new Buffer.from(urn).toString('base64');
       const manifest = await derivativesAPI.getManifest(base64Urn, {}, oAuth2TwoLegged, credentials);
       // harvest derivatives
@@ -234,7 +235,7 @@ function download (oAuth2TwoLegged, credentials, urn) {
       // format derivative resources
       const nestedDerivatives = derivatives.map((item) => {
         return item.files.map((file) => {
-          const localPath = _resolve(BUBBLES_OUTPUT_DIR, item.localPath);
+          const localPath = path.resolve(config.BUBBLES_OUTPUT_DIR, item.localPath);
           return {
             basePath: item.basePath,
             guid: item.guid,
@@ -246,30 +247,30 @@ function download (oAuth2TwoLegged, credentials, urn) {
         });
       });
       // flatten resources
-      const derivativesList = flattenDeep(nestedDerivatives);
+      const derivativesList = _.flattenDeep(nestedDerivatives);
       // creates async download tasks for each
       // derivative file
       const downloadTasks = derivativesList.map((derivative) => {
         return new Promise(async (resolve) => {
-          const urn = join(derivative.basePath, derivative.fileName);
+          const urn = path.join(derivative.basePath, derivative.fileName);
           const data = await getDerivative(credentials.access_token, urn);
-          const filename = _resolve(derivative.localPath, derivative.fileName);
+          const filename = path.resolve(derivative.localPath, derivative.fileName);
           await saveToDisk(data, filename);
           resolve(filename);
-        });
-      });
+        })
+      })
       // wait for all files to be downloaded
       const files = await Promise.all(downloadTasks);
       resolve(files);
     } catch (err) {
-      console.error('ERROR: download of bubbles failed! ' + JSON.stringify(err));
+      console.error(`ERROR: download of bubbles failed! ${JSON.stringify(err)}`);
       reject(err);
     }
-  });
+  })
 }
 
 function getBucketDetails (bucketsApi, oAuth2TwoLegged) {
-  return bucketsApi.getBucketDetails(BUCKET_KEY, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials());
+  return bucketsApi.getBucketDetails(config.BUCKET_KEY, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials());
 }
 
 function getDerivative (token, urn) {
@@ -277,7 +278,7 @@ function getDerivative (token, urn) {
     const baseUrl = 'https://developer.api.autodesk.com/';
     const endpoint = baseUrl + `derivativeservice/v2/derivatives/${urn}`;
     request({
-      agentOptions: { secureProtocol: TLS_VERSION },
+      agentOptions: { secureProtocol: config.TLS_VERSION },
       encoding: null,
       headers: { 'Authorization': `Bearer ${token}`, 'Accept-Encoding': 'gzip, deflate' },
       method: 'GET',
@@ -288,7 +289,7 @@ function getDerivative (token, urn) {
       if ([200, 201, 202].indexOf(response.statusCode) < 0) { return reject(response); }
       return resolve(body || {});
     })
-  });
+  })
 }
 
 function getDerivatives (token, manifest) {
@@ -317,17 +318,17 @@ function getDerivatives (token, manifest) {
       const derivatives = await Promise.all(derivativeTasks);
       return resolve(derivatives);
     } catch (err) {
-      console.error('Failed to get derivatives! ' + err);
+      console.error(`Failed to get derivatives! ${err}`);
       reject(err);
     }
-  });
+  })
 }
 
 function getManifest (token, objectId) {
   const base64Urn = new Buffer.from(objectId).toString('base64');
-  const endpoint = DERIVATIVE_BASE_ENDPOINT + '/designdata/' + base64Urn + '/manifest';
+  const endpoint = `${config.DERIVATIVE_BASE_ENDPOINT}/designdata/${base64Urn}/manifest`;
   const options = {
-    agentOptions: { secureProtocol: TLS_VERSION },
+    agentOptions: { secureProtocol: config.TLS_VERSION },
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
     json: true,
     method: 'GET',
@@ -414,12 +415,12 @@ function parseManifest (manifest) {
 function saveToDisk (data, filename) {
   return new Promise(async (resolve, reject) => {
     try {
-      if (!existsSync(dirname(filename))) {
-        mkdirSync(dirname(filename));
+      if (!fs.existsSync(path.dirname(filename))) {
+        fs.mkdirSync(path.dirname(filename));
       }
-      const wstream = createWriteStream(filename);
-      const ext = extname(filename);
-      wstream.on('finish', () => { resolve() })
+      const wstream = fs.createWriteStream(filename);
+      const ext = path.extname(filename);
+      wstream.on('finish', () => { resolve(); })
       if (typeof data === 'object' && ext === '.json') {
         wstream.write(JSON.stringify(data));
       } else {
@@ -434,7 +435,7 @@ function saveToDisk (data, filename) {
 
 function translateToSVF (objectId, oAuth2TwoLegged) {
   return new Promise(function (resolve, reject) {
-    const derivativeApi = new DerivativesApi();
+    const derivativeApi = new forgeSDK.DerivativesApi();
     const base64Urn = new Buffer.from(objectId).toString('base64');
     const job = {
       'input': { 'urn': base64Urn, 'compressedUrn': true, 'rootFilename': 'result.obj' },
@@ -452,42 +453,42 @@ function translateToSVF (objectId, oAuth2TwoLegged) {
         }
       }, function (err) {
         reject(err);
-      });
+      })
   });
 }
 
 function uploadfileToBucket (objectsApi, oAuth2TwoLegged, filePath) {
   return new Promise(function (resolve, reject) {
-    readFile(filePath, function (err, data) {
+    fs.readFile(filePath, function (err, data) {
       if (err) {
         reject(err);
       } else {
         const fileName = filePath.split('/').pop();
-        objectsApi.uploadObject(BUCKET_KEY, fileName, data.length, data, {}, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials())
+        objectsApi.uploadObject(config.BUCKET_KEY, fileName, data.length, data, {}, oAuth2TwoLegged, oAuth2TwoLegged.getCredentials())
           .then(function (res) {
             resolve(res);
           }, function (err) {
             reject(err);
-          });
+          })
       }
-    });
-  });
+    })
+  })
 }
 
 function uploadToS3Bucket (svfFilePath) {
-  const s3 = new S3({apiVersion: '2006-03-01'});
-  let uploadParams = {Bucket: AWS_S3_BUCKET};
-  const fileStream = createReadStream(svfFilePath);
+  const s3 = new AWS.S3({apiVersion: '2006-03-01'});
+  let uploadParams = {Bucket: config.AWS_S3_BUCKET};
+  const fileStream = fs.createReadStream(svfFilePath);
   fileStream.on('error', function (err) {
     console.log('File Error', err);
   })
   uploadParams.Body = fileStream;
-  uploadParams.Key = basename(svfFilePath);
+  uploadParams.Key = path.basename(svfFilePath);
   // call S3 to retrieve upload file to specified bucket
   const uploadPromise = s3.upload(uploadParams).promise();
   return uploadPromise
     .then(function (data) {
-      console.info(`INFO: Successfully uploaded SVF file to S3! S{JSON.stringify(data)}\n`);
+      console.info(`INFO: Successfully uploaded SVF file to S3! ${JSON.stringify(data)}\n`);
     })
     .catch(function (err) {
       console.error(`ERROR: Failed to upload SVF file to S3! ${err}\n`);
