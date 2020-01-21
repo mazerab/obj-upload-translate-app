@@ -1,4 +1,4 @@
-'use strict'
+'use strict';
 
 export const DERIVATIVE_BASE_ENDPOINT = 'https://developer.api.autodesk.com/modelderivative/v2';
 export const OSS_BASE_ENDPOINT = 'https://developer.api.autodesk.com/oss/v2';
