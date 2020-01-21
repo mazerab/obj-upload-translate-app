@@ -1,4 +1,4 @@
-'use strict'
+'use strict';
 import awsServerLessExpress from 'aws-serverless-express';
 import app from './app';
 const binaryMimeTypes = [
