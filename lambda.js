@@ -1,5 +1,5 @@
 'use strict'
-import { createServer, proxy } from 'aws-serverless-express';
+import awsServerLessExpress from 'aws-serverless-express';
 import app from './app';
 const binaryMimeTypes = [
   'application/octet-stream',
@@ -10,5 +10,5 @@ const binaryMimeTypes = [
   'image/png',
   'image/svg+xml'
 ];
-const server = createServer(app, null, binaryMimeTypes);
-export function handler(event, context) { return proxy(server, event, context); }
+const server = awsServerLessExpress.createServer(app, null, binaryMimeTypes);
+export function handler(event, context) { return awsServerLessExpress.proxy(server, event, context); }
