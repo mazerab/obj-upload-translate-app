@@ -145,7 +145,7 @@ derivativeRouter.get('/downloadBubbles', function (req, res) {
             let promise;
             let promiseChain = [];
             for (let index in files) {
-              const preSignedUrl = await generateS3PreSignedUrl(files[index]);
+              const preSignedUrl = generateS3PreSignedUrl(files[index]);
               promise = uploadToS3Bucket(files[index], preSignedUrl);
               promiseChain.push(promise);
             }
@@ -270,23 +270,26 @@ function download (oAuth2TwoLegged, credentials, urn) {
   })
 }
 
-async function generateS3PreSignedUrl(filename) {
-  try {
-    const s3 = new AWS.S3({
-      accessKeyId: config.AWS_ACCESS_KEY_ID,
-      apiVersion: '2006-03-01',
-      secretAccessKey: config.AWS_SECRET_ACCESS_KEY
-    });
-    const params = {
-      Bucket: config.AWS_S3_BUCKET,
-      Expires: config.AWS_EXPIRES_SECONDS,
-      Key: filename
-    };
-    const preSignedUrl = await s3.getSignedUrlPromise('putObject', params);
-    return preSignedUrl;
-  } catch (err) {
-    console.error(`ERROR: Failed to generate presigned S3 url! ${JSON.stringify(err)}`);
-  }
+function generateS3PreSignedUrl(filename) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const s3 = new AWS.S3({
+        accessKeyId: config.AWS_ACCESS_KEY_ID,
+        apiVersion: '2006-03-01',
+        secretAccessKey: config.AWS_SECRET_ACCESS_KEY
+      });
+      const params = {
+        Bucket: config.AWS_S3_BUCKET,
+        Expires: config.AWS_EXPIRES_SECONDS,
+        Key: filename
+      };
+      const preSignedUrl = await s3.getSignedUrlPromise('putObject', params);
+      resolve(preSignedUrl);
+    } catch (err) {
+      console.error(`Failed to generate pre-signed S3 url! ${err}`);
+      reject(err);
+    }
+  });
 }
 
 function getBucketDetails (bucketsApi, oAuth2TwoLegged) {
@@ -307,9 +310,9 @@ function getDerivative (token, urn) {
       if (err) { return reject(err); }
       if (body && body.errors) { return reject(body.errors); }
       if ([200, 201, 202].indexOf(response.statusCode) < 0) { return reject(response); }
-      return resolve(body || {});
-    })
-  })
+      resolve(body || {});
+    });
+  });
 }
 
 function getDerivatives (token, manifest) {
@@ -336,7 +339,7 @@ function getDerivatives (token, manifest) {
         }
       })
       const derivatives = await Promise.all(derivativeTasks);
-      return resolve(derivatives);
+      resolve(derivatives);
     } catch (err) {
       console.error(`Failed to get derivatives! ${err}`);
       reject(err);
@@ -397,7 +400,7 @@ function getSVFDerivatives (token, item) {
           files.push(asset.URI);
         })
       }
-      return resolve(Object.assign({}, item, { files }));
+      resolve(Object.assign({}, item, { files }));
     } catch (ex) {
       reject(ex);
     }
@@ -496,17 +499,18 @@ function uploadfileToBucket (objectsApi, oAuth2TwoLegged, filePath) {
 }
 
 function uploadToS3Bucket (svfFilePath, preSignedUrl) {
-  fs.readFile(svfFilePath, function(err, data) {
-    if (err) {
-      return console.error(`ERROR: Failed to upload SVF file to S3! ${err}\n`);
-    }
-    request({
-      body: data,
-      method: 'PUT',
-      url: preSignedUrl
-    }, function(err, res, body) {
-      console.info(`INFO: Successfully uploaded SVF file to S3! ${JSON.stringify(body)}\n`);
+  return new Promise(async (resolve, reject) => {
+    fs.readFile(svfFilePath, function(err, data) {
+      if (readErr) { reject(readErr); }
+      request({
+        body: data,
+        method: 'PUT',
+        url: preSignedUrl
+      }, function(putErr, res, body) {
+        if (putErr) { reject(putErr); }
+        console.info(`INFO: Successfully uploaded SVF file to S3! ${JSON.stringify(body)}\n`);
+        resolve(body);
+      });
     });
   });
-  
 }
