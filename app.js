@@ -145,7 +145,8 @@ derivativeRouter.get('/downloadBubbles', function (req, res) {
             let promise;
             let promiseChain = [];
             for (let index in files) {
-              promise = uploadToS3Bucket(files[index]);
+              const preSignedUrl = await generateS3PreSignedUrl(files[index]);
+              promise = uploadToS3Bucket(files[index], preSignedUrl);
               promiseChain.push(promise);
             }
             Promise.all(promiseChain)
@@ -267,6 +268,25 @@ function download (oAuth2TwoLegged, credentials, urn) {
       reject(err);
     }
   })
+}
+
+async function generateS3PreSignedUrl(filename) {
+  try {
+    const s3 = new AWS.S3({
+      accessKeyId: config.AWS_ACCESS_KEY_ID,
+      apiVersion: '2006-03-01',
+      secretAccessKey: config.AWS_SECRET_ACCESS_KEY
+    });
+    const params = {
+      Bucket: config.AWS_S3_BUCKET,
+      Expires: config.AWS_EXPIRES_SECONDS,
+      Key: filename
+    };
+    const preSignedUrl = await s3.getSignedUrlPromise('putObject', params);
+    return preSignedUrl;
+  } catch (err) {
+    console.error(`ERROR: Failed to generate presigned S3 url! ${JSON.stringify(err)}`);
+  }
 }
 
 function getBucketDetails (bucketsApi, oAuth2TwoLegged) {
@@ -475,22 +495,18 @@ function uploadfileToBucket (objectsApi, oAuth2TwoLegged, filePath) {
   })
 }
 
-function uploadToS3Bucket (svfFilePath) {
-  const s3 = new AWS.S3({apiVersion: '2006-03-01'});
-  let uploadParams = {Bucket: config.AWS_S3_BUCKET};
-  const fileStream = fs.createReadStream(svfFilePath);
-  fileStream.on('error', function (err) {
-    console.log('File Error', err);
-  })
-  uploadParams.Body = fileStream;
-  uploadParams.Key = path.basename(svfFilePath);
-  // call S3 to retrieve upload file to specified bucket
-  const uploadPromise = s3.upload(uploadParams).promise();
-  return uploadPromise
-    .then(function (data) {
-      console.info(`INFO: Successfully uploaded SVF file to S3! ${JSON.stringify(data)}\n`);
-    })
-    .catch(function (err) {
-      console.error(`ERROR: Failed to upload SVF file to S3! ${err}\n`);
+function uploadToS3Bucket (svfFilePath, preSignedUrl) {
+  fs.readFile(svfFilePath, function(err, data) {
+    if (err) {
+      return console.error(`ERROR: Failed to upload SVF file to S3! ${err}\n`);
+    }
+    request({
+      body: data,
+      method: 'PUT',
+      url: preSignedUrl
+    }, function(err, res, body) {
+      console.info(`INFO: Successfully uploaded SVF file to S3! ${JSON.stringify(body)}\n`);
     });
+  });
+  
 }

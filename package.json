@@ -6,7 +6,7 @@
   "scripts": {
     "create": "claudia create --handler lambda.handler --deploy-proxy-api --region us-east-1 -name obj-upload-translate-service --role lambda-claudia-executor --version demo",
     "destroy": "claudia destroy",
-    "setvars": "claudia set-version --version demo --set-env FORGE_APP_ID=xxx,FORGE_APP_SECRET=xxx,S3_BUCKET=xxx,REDIS_PASSWORD=xxx",
+    "setvars": "claudia set-version --version demo --set-env FORGE_APP_ID=xxx,FORGE_APP_SECRET=xxx,AWS_ID=xxx,AWS_SECRET=xxx,S3_BUCKET=xxx,REDIS_PASSWORD=xxx",
     "test": "echo \"Error: no test specified\" && exit 1",
     "update": "claudia update --version demo"
   },
