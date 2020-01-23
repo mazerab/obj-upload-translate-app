@@ -55,7 +55,7 @@ const awsRouter = express.Router();
 awsRouter.get('/presignedurl/:filename', function (req, res) {
   generateS3PreSignedUrl(req.params.filename, 'image/jpeg')
     .then(function(preSignedUrl) {
-      res.send(preSignedUrl);
+      res.send({ url: preSignedUrl });
       res.end();
     })
     .catch(function(urlErr) {
