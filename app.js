@@ -53,7 +53,7 @@ app.use('/expo', expoRouter);
 // AWS endpoints
 const awsRouter = express.Router();
 awsRouter.get('/presignedurl/:filename', function (req, res) {
-  generateS3PreSignedUrl(req.params.filename)
+  generateS3PreSignedUrl(req.params.filename, 'image/jpeg')
     .then(function(preSignedUrl) {
       res.send(preSignedUrl);
       res.end();
@@ -159,7 +159,7 @@ derivativeRouter.get('/downloadBubbles', function (req, res) {
             let promise;
             let promiseChain = [];
             for (let index in files) {
-              const preSignedUrl = generateS3PreSignedUrl(files[index]);
+              const preSignedUrl = generateS3PreSignedUrl(files[index], 'application/octet-stream');
               promise = uploadToS3Bucket(files[index], preSignedUrl);
               promiseChain.push(promise);
             }
@@ -284,7 +284,7 @@ function download (oAuth2TwoLegged, credentials, urn) {
   })
 }
 
-function generateS3PreSignedUrl(filename) {
+function generateS3PreSignedUrl(filename, contentType) {
   return new Promise(async (resolve, reject) => {
     try {
       const s3 = new AWS.S3({
@@ -294,6 +294,7 @@ function generateS3PreSignedUrl(filename) {
       });
       const params = {
         Bucket: config.AWS_S3_BUCKET,
+        ContentType: contentType,
         Expires: config.AWS_EXPIRES_SECONDS,
         Key: filename
       };
