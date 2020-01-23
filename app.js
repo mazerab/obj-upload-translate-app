@@ -50,6 +50,20 @@ expoRouter.post('/tokens', function (req, res) {
 })
 app.use('/expo', expoRouter);
 
+// AWS endpoints
+const awsRouter = express.Router();
+awsRouter.get('/presignedurl/:filename', function (req, res) {
+  generateS3PreSignedUrl(req.params.filename)
+    .then(function(preSignedUrl) {
+      res.send(preSignedUrl);
+      res.end();
+    })
+    .catch(function(urlErr) {
+      res.status(500).send({'ERROR': urlErr});
+    });
+});
+app.use('/aws', awsRouter);
+
 // Forge Data Management endpoints
 const dataRouter = express.Router();
 dataRouter.post('/uploadAndTranslate', function (req, res) {
